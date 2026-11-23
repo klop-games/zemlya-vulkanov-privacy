@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Коды KVERT на сервере GitHub — без Mac и без Claude (решение Никиты 20.11.2026, Д2 аудита).
 
-Задача GitHub Actions в `klop-games/zemlya-vulkanov` запускает этот скрипт раз в день.
+Задача GitHub Actions в `klop-games/zemlya-vulkanov-privacy` запускает этот скрипт раз в день.
 Он забирает недельный прогноз KVERT, сопоставляет названия с вулканами приложения
 (`tools/volcano_names.json`) и, если прогноз изменился, пишет `activity.json`
 с новой версией и поднимает её в `updates.json`. Коммит делает сама задача.

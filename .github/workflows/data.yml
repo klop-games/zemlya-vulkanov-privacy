@@ -9,10 +9,20 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   data:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - name: Коды KVERT
@@ -25,3 +35,14 @@ jobs:
             git commit -m "Коды KVERT: прогноз от $(python3 -c 'import json;print(json.load(open("activity.json"))["forecastDate"])')" -- activity.json updates.json
             git push
           fi
+      - name: Build validated public artifact
+        run: python3 tools/mirror_site.py --local
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload public files
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: Deploy Pages in this workflow
+        id: deployment
+        uses: actions/deploy-pages@v4

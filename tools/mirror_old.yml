@@ -1,0 +1,53 @@
+name: Mirror canonical public site
+
+on:
+  schedule:
+    - cron: "41 */6 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout this legacy repository
+        uses: actions/checkout@v4
+      - name: Download and validate one canonical snapshot
+        run: python3 tools/mirror_site.py --sync-root .
+      - name: Retain public snapshot in this repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t public_files < _mirror_files.txt
+          git add -- "${public_files[@]}"
+          if ! git diff --cached --quiet -- "${public_files[@]}"; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            snapshot_sha="$(cat _mirror_sha.txt)"
+            git commit -m "Mirror canonical public site at ${snapshot_sha}" -- "${public_files[@]}"
+            git push origin HEAD:main
+          fi
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload only validated public files
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: Deploy the mirror in this workflow
+        id: deployment
+        uses: actions/deploy-pages@v4
