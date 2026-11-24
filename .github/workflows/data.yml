@@ -1,30 +1,28 @@
 name: Данные приложения
-# Раз в день: коды KVERT публикуются сами. Сторож сводок Минтуризма (tools/mintur_watch.py)
-# здесь не работает: kamgov.ru отвечает серверам GitHub 403 (проверено 20.11.2026).
-# Решение Никиты 20.11.2026: проверка на сервере GitHub вместо задачи Claude на Mac.
+# KVERT updates and Pages deployment remain in the same workflow run.
 on:
   schedule:
     - cron: "17 4 * * *"
   workflow_dispatch:
-
 permissions:
-  contents: write
-  pages: write
-  id-token: write
-
+  contents: read
 concurrency:
   group: pages
   cancel-in-progress: false
-
 jobs:
   data:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: write
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact_id }}
     steps:
       - uses: actions/checkout@v4
+      - name: Test download recovery and artifact readiness
+        run: |
+          python3 tools/test_mirror_site.py
+          node tools/test_pages_artifact.cjs
       - name: Коды KVERT
         run: python3 tools/kvert_server.py
       - name: Опубликовать, если изменилось
@@ -37,12 +35,19 @@ jobs:
           fi
       - name: Build validated public artifact
         run: python3 tools/mirror_site.py --local
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-      - name: Upload public files
+      - name: Upload only validated public files
+        id: upload
         uses: actions/upload-pages-artifact@v4
         with:
+          name: github-pages
           path: _site
-      - name: Deploy Pages in this workflow
-        id: deployment
-        uses: actions/deploy-pages@v4
+  deploy:
+    needs: data
+    permissions:
+      contents: read
+      actions: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/deploy.yml
+    with:
+      artifact_id: ${{ needs.data.outputs.artifact_id }}
