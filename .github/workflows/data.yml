@@ -1,16 +1,37 @@
 name: Данные приложения
-# KVERT updates and Pages deployment remain in the same workflow run.
+# Плановая проверка только читает данные. Публикация требует ручного подтверждения конкретной сводки.
 on:
   schedule:
     - cron: "17 4 * * *"
   workflow_dispatch:
+    inputs:
+      approved_sha256:
+        description: "SHA-256 после независимой сверки даты и кодов. Оставьте пустым для просмотра."
+        required: false
+        type: string
 permissions:
   contents: read
 concurrency:
   group: pages
   cancel-in-progress: false
 jobs:
+  preview:
+    if: github.event_name == 'schedule' || inputs.approved_sha256 == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Проверить правила сверки
+        run: python3 tools/test_kvert_review.py
+      - name: Предложение KVERT для сверки
+        run: python3 tools/kvert_server.py --показать
+
   data:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.approved_sha256 != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -21,10 +42,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test download recovery and artifact readiness
         run: |
+          python3 tools/test_kvert_review.py
           python3 tools/test_mirror_site.py
           node tools/test_pages_artifact.cjs
       - name: Коды KVERT
-        run: python3 tools/kvert_server.py
+        env:
+          APPROVED_SHA256: ${{ inputs.approved_sha256 }}
+        run: python3 tools/kvert_server.py --approve "$APPROVED_SHA256"
       - name: Опубликовать, если изменилось
         run: |
           if ! git diff --quiet -- activity.json updates.json; then

@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test download recovery and artifact readiness
         run: |
+          python3 tools/test_kvert_review.py
           python3 tools/test_mirror_site.py
           node tools/test_pages_artifact.cjs
       - name: Build validated public artifact

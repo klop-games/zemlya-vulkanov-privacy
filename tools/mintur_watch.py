@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Сторож сводок Минтуризма — сообщает о новой сводке, сам ничего не публикует.
+"""Сторож сводок Минтуризма - сообщает о новой сводке, сам ничего не публикует.
 
 Объявления (`notices.json`) меняются только после «да» Никиты по списку правок
 (правило 13.09.2026). Поэтому задача GitHub Actions лишь замечает, что вышла
 оперативная сводка новее даты в объявлениях, и заводит задачу (issue) в репозитории:
 GitHub присылает о ней письмо. Правки готовит Claude, когда Никита попросит.
 
-    python3 tools/mintur_watch.py   # печатает дату свежей сводки; с GH_TOKEN — заводит issue
+    python3 tools/mintur_watch.py   # печатает дату свежей сводки; с GH_TOKEN - заводит issue
 """
 import html, json, os, re, subprocess, sys, urllib.request
 
@@ -39,7 +39,7 @@ def latest_summary():
 def main():
     best = latest_summary()
     if not best:
-        sys.exit("в ленте нет оперативных сводок — проверьте адрес ленты")
+        sys.exit("в ленте нет оперативных сводок - проверьте адрес ленты")
     date, title, link = best
     with open(os.path.join(ROOT, "notices.json"), encoding="utf-8") as f:
         have = max(n["date"] for n in json.load(f)["items"])
@@ -56,7 +56,7 @@ def main():
     if name in found:
         print("задача уже заведена")
         return 0
-    body = ("Вышла %s — новее последней даты в объявлениях (%s).\n\n%s\n\n"
+    body = ("Вышла %s - новее последней даты в объявлениях (%s).\n\n%s\n\n"
             "Объявления сами не меняются: попросите Claude подготовить список правок, "
             "после вашего «да» он их опубликует." % (title, have, link))
     subprocess.run(["gh", "issue", "create", "--title", name, "--body", body], check=True)

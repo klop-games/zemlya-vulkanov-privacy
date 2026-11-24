@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Коды KVERT на сервере GitHub — без Mac и без Claude (решение Никиты 20.11.2026, Д2 аудита).
+"""Подготовить бюллетень KVERT для сверки редактором.
 
-Задача GitHub Actions в `klop-games/zemlya-vulkanov-privacy` запускает этот скрипт раз в день.
-Он забирает недельный прогноз KVERT, сопоставляет названия с вулканами приложения
-(`tools/volcano_names.json`) и, если прогноз изменился, пишет `activity.json`
-с новой версией и поднимает её в `updates.json`. Коммит делает сама задача.
-
-Разбор страницы — тот же, что в `ios/Kamchatka/tools/kvert.py` проекта; правишь
-одно — поправь и другое. Названий не угадываем: что не сошлось, печатается отдельно.
-
-    python3 tools/kvert_server.py            # обновить файлы в корне репозитория
-    python3 tools/kvert_server.py --показать # только показать
+Обычный запуск показывает дату, полный список кодов и SHA-256 предложения.
+После независимой сверки редактор передаёт --approve SHA256 через workflow_dispatch.
 """
-import datetime, html, json, os, re, sys, urllib.request
+import argparse
+import datetime
+import hashlib
+import html
+import json
+import os
+import re
+import sys
+import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 URL = "http://kvert.febras.net/progn/index"
@@ -29,18 +29,28 @@ ALIASES = {
     "КРОНОЦКИЙ": "Кроноцкая сопка",
     "ДИКИЙ ГРЕБЕНЬ": "gvp-300022",
 }
-# Меньше — значит, страница KVERT поменяла вид: не публикуем, задача падает и пишет письмо
+# Меньше - значит, страница KVERT поменяла вид: не публикуем, задача падает и пишет письмо
 MIN_VOLCANOES = 20
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def text_of(url):
     # С серверов GitHub kvert.febras.net отвечает через раз (20.11.2026 один запуск
-    # прошёл, следующий ушёл в тайм-аут) — три попытки с паузой
+    # прошёл, следующий ушёл в тайм-аут) - три попытки с паузой
     import time
     req = urllib.request.Request(url, headers={"User-Agent": UA})
+    opener = urllib.request.build_opener(NoRedirect())
     for attempt in range(3):
         try:
-            raw = urllib.request.urlopen(req, timeout=90).read().decode("utf-8", "replace")
+            with opener.open(req, timeout=75) as response:
+                raw_bytes = response.read(2_000_001)
+            if len(raw_bytes) > 2_000_000:
+                raise ValueError("Страница KVERT слишком велика")
+            raw = raw_bytes.decode("utf-8", "replace")
             break
         except OSError as e:
             if attempt == 2:
@@ -56,7 +66,7 @@ def text_of(url):
 def parse(t):
     i = t.find("KVERT-ПРОГНОЗ ДЛЯ АВИАЦИИ")
     if i < 0:
-        sys.exit("на странице нет недельного прогноза — проверьте kvert.febras.net")
+        sys.exit("на странице нет недельного прогноза - проверьте kvert.febras.net")
     m = re.search(r"([A-Za-z]+) (\d{1,2}), (\d{4})", t[i:i + 300])
     months = {"January": 1, "February": 2, "March": 3, "April": 4, "May": 5, "June": 6,
               "July": 7, "August": 8, "September": 9, "October": 10, "November": 11, "December": 12}
@@ -84,12 +94,22 @@ def save(name, data):
         f.write(json.dumps(data, ensure_ascii=False, indent=1) + "\n")
 
 
-def main():
-    show = "--показать" in sys.argv
+def arguments():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--справка", action="help", help="показать эту справку")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--показать", action="store_true", help="только показать предложение")
+    mode.add_argument("--approve", metavar="SHA256", help="отпечаток независимо проверенного бюллетеня")
+    args = parser.parse_args()
+    if args.approve is not None and not re.fullmatch("[0-9a-f]{64}", args.approve):
+        parser.error("ожидается SHA-256 из 64 строчных шестнадцатеричных знаков")
+    return args
+
+
+def reviewed_update(old, vol, approval):
     date, pairs = parse(text_of(URL))
     if not date:
-        sys.exit("дата прогноза не разобрана — формат страницы изменился")
-    vol = load("tools/volcano_names.json")["items"]
+        sys.exit("Дата прогноза не разобрана")
     by_name = {v["nameRu"].strip().lower(): v for v in reversed(vol)}
     items, unknown = [], []
     for name, color in pairs:
@@ -101,27 +121,36 @@ def main():
             continue
         items.append({"gvp": v["gvpNumber"], "id": v["id"], "nameRu": v["nameRu"], "code": color})
     items.sort(key=lambda x: x["id"])
-    print("прогноз от %s: разобрано %d вулканов" % (date, len(items)))
-    for c in ("red", "orange", "yellow"):
-        named = [i["nameRu"] for i in items if i["code"] == c]
-        if named:
-            print("  %-7s %s" % (c, ", ".join(named)))
     if unknown:
-        print("  не сопоставлено (%d): %s" % (len(unknown), ", ".join(unknown)))
-    if len(items) < MIN_VOLCANOES:
-        sys.exit("разобрано меньше %d вулканов — не публикую" % MIN_VOLCANOES)
-
-    old = load("activity.json")
-    if old.get("items") == items and old.get("forecastDate") == date:
-        print("прогноз не изменился")
-        return 0
+        sys.exit("Есть несопоставленные вулканы. Нужна проверка таблицы названий.")
+    if len(items) < MIN_VOLCANOES or len({item["id"] for item in items}) != len(items):
+        sys.exit("Неполный список вулканов или повтор идентификатора")
     if old.get("forecastDate") and old["forecastDate"] > date:
-        sys.exit("на странице прогноз старее опубликованного (%s < %s) — не публикую" % (date, old["forecastDate"]))
-    new = dict(old)
-    new.update({"forecastDate": date, "count": len(items), "items": items,
-                "version": old.get("version", 0) + 1})
-    if show:
-        print("опубликовал бы версию %d" % new["version"])
+        sys.exit("На странице прогноз старее последнего опубликованного")
+    if old.get("items") == items and old.get("forecastDate") == date:
+        print("Прогноз от %s совпадает с текущим" % date)
+        return None
+
+    # Отпечаток связывает решение редактора с датой и каждым публикуемым кодом.
+    bulletin = {"forecastDate": date, "items": items}
+    payload = json.dumps(bulletin, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+    digest = hashlib.sha256(payload).hexdigest()
+    print("Кандидат от %s. Сверьте дату и каждую строку по независимому официальному источнику." % date)
+    for item in items:
+        print("  %s (%s): %s" % (item["nameRu"], item["id"], item["code"]))
+    print("SHA-256: " + digest)
+    if approval is None:
+        print("Только просмотр. Последний проверенный бюллетень сохранён.")
+        return None
+    if approval != digest:
+        sys.exit("Отпечаток отличается от подтверждённого. Получите и проверьте новый бюллетень.")
+    return dict(old, **bulletin, count=len(items), version=old.get("version", 0) + 1)
+
+
+def main():
+    args = arguments()
+    new = reviewed_update(load("activity.json"), load("tools/volcano_names.json")["items"], args.approve)
+    if new is None:
         return 0
     save("activity.json", new)
     man = load("updates.json")
